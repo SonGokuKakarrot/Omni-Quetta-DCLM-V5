@@ -1,1 +1,15 @@
 
+{
+  "manifest_version": 3,
+  "name": "Nocturnal Omni",
+  "version": "2.0",
+  "description": "Stylish and powerful Discord enhancer",
+  "permissions": ["activeTab", "scripting"],
+  "content_scripts": [
+    {
+      "matches": ["*://discord.com/*"],
+      "js": ["injector.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
