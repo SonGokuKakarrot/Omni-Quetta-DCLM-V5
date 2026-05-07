@@ -24,17 +24,17 @@ body {
 }
 
 body[data-theme="stable"] {
-  --bg-start: #042f2e;
+  --bg-start: #052e16;
   --bg-end: #0f172a;
-  --accent: #2dd4bf;
-  --accent-2: #38bdf8;
+  --accent: #39ff14;
+  --accent-2: #00ffa3;
 }
 
 body[data-theme="extreme"] {
-  --bg-start: #500724;
+  --bg-start: #422006;
   --bg-end: #1e1b4b;
-  --accent: #fb7185;
-  --accent-2: #c084fc;
+  --accent: #fff01f;
+  --accent-2: #ffd400;
 }
 
 main {
@@ -143,6 +143,20 @@ span { color: var(--text); font-size: 12px; min-width: 40px; text-align: right; 
 .presetBar button.active {
   border-color: rgba(255, 255, 255, .86);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, .24), 0 0 28px color-mix(in srgb, var(--accent) 58%, transparent);
+}
+#stablePreset.active {
+  background: linear-gradient(135deg, #39ff14, #00ffa3);
+  color: #052e16;
+  text-shadow: 0 0 18px rgba(57, 255, 20, .65);
+}
+#extremePreset.active {
+  background: linear-gradient(135deg, #fff01f, #ffd400);
+  color: #2f2300;
+  text-shadow: 0 0 18px rgba(255, 240, 31, .65);
+}
+#stablePreset.active,
+#extremePreset.active {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .24), 0 0 30px var(--accent), 0 0 60px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .presetBar button.active::after { content: " ✓"; }
 .presetBar button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
