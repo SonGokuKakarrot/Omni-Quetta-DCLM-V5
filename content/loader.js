@@ -1,6 +1,5 @@
-const EXT = globalThis.browser ?? globalThis.chrome;
-
 (() => {
+  const EXT = globalThis.browser ?? globalThis.chrome;
   const injectorUrl = EXT.runtime.getURL("core/injector.js");
 
   function inject() {
