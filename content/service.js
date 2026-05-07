@@ -55,10 +55,6 @@ const EXT = globalThis.browser ?? globalThis.chrome;
   });
 
   setInterval(sync, 4000);
+  setInterval(heartbeat, 5000);
   sync();
 })();
-
-
-setInterval(() => {
-  heartbeat();
-}, 5000);
