@@ -21,6 +21,27 @@ const PRESETS = {
 
 const ids = Object.keys(DEFAULTS);
 
+function presetMatches(config, preset) {
+  return Object.entries(preset).every(([key, value]) => config[key] === value);
+}
+
+function activePreset(config) {
+  if (presetMatches(config, PRESETS.stable)) return "stable";
+  if (presetMatches(config, PRESETS.extreme)) return "extreme";
+  return "custom";
+}
+
+function updatePresetState(config) {
+  const active = activePreset(config);
+  const stableButton = document.getElementById("stablePreset");
+  const extremeButton = document.getElementById("extremePreset");
+  document.body.dataset.theme = active;
+  stableButton?.classList.toggle("active", active === "stable");
+  stableButton?.setAttribute("aria-pressed", String(active === "stable"));
+  extremeButton?.classList.toggle("active", active === "extreme");
+  extremeButton?.setAttribute("aria-pressed", String(active === "extreme"));
+}
+
 function updateLabels() {
   ids.forEach((id) => {
     const el = document.getElementById(id);
@@ -37,6 +58,7 @@ function applyToControls(config) {
     else el.value = config[id];
   });
   updateLabels();
+  updatePresetState(config);
 }
 
 async function saveConfig(config) {
@@ -59,6 +81,7 @@ async function init() {
       merged[id] = el.type === "checkbox" ? el.checked : Number(el.value);
       await EXT.storage.local.set({ micMaximizerConfig: merged });
       updateLabels();
+      updatePresetState(merged);
     });
   });
 
