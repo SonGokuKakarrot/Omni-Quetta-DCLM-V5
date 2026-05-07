@@ -1,32 +1,32 @@
-const EXT = globalThis.browser ?? globalThis.chrome;
-const HAS_PROMISE_API = typeof globalThis.browser !== "undefined" && EXT === globalThis.browser;
-
-function storageGet(key) {
-  if (HAS_PROMISE_API) return EXT.storage.local.get(key);
-  return new Promise((resolve) => {
-    try {
-      EXT.storage.local.get(key, (res) => {
-        if (EXT.runtime?.lastError) resolve({});
-        else resolve(res || {});
-      });
-    } catch {
-      resolve({});
-    }
-  });
-}
-
-function sendMessage(message) {
-  if (HAS_PROMISE_API) return EXT.runtime.sendMessage(message);
-  return new Promise((resolve) => {
-    try {
-      EXT.runtime.sendMessage(message, () => resolve(!EXT.runtime?.lastError));
-    } catch {
-      resolve(false);
-    }
-  });
-}
-
 (() => {
+  const EXT = globalThis.browser ?? globalThis.chrome;
+  const HAS_PROMISE_API = typeof globalThis.browser !== "undefined" && EXT === globalThis.browser;
+
+  function storageGet(key) {
+    if (HAS_PROMISE_API) return EXT.storage.local.get(key);
+    return new Promise((resolve) => {
+      try {
+        EXT.storage.local.get(key, (res) => {
+          if (EXT.runtime?.lastError) resolve({});
+          else resolve(res || {});
+        });
+      } catch {
+        resolve({});
+      }
+    });
+  }
+
+  function sendMessage(message) {
+    if (HAS_PROMISE_API) return EXT.runtime.sendMessage(message);
+    return new Promise((resolve) => {
+      try {
+        EXT.runtime.sendMessage(message, () => resolve(!EXT.runtime?.lastError));
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
   const DEFAULTS = {
     enabled: true,
     gainDb: 18,
