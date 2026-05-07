@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mic Maximizer</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main>
+    <h1>Mic Maximizer</h1>
+    <label><input id="enabled" type="checkbox" /> Enabled</label>
+    <p id="hookStatus" class="status">Hook status: checking...</p>
+    <div class="presetBar"><button id="stablePreset" type="button">Stable Clear</button><button id="extremePreset" type="button">50x Boost</button></div>
+    <div class="field"><label for="gainDb">Gain (dB)</label><input id="gainDb" type="range" min="0" max="48" value="18" /><span id="gainDbVal"></span></div>
+    <div class="field"><label for="loudness">Loudness Drive</label><input id="loudness" type="range" min="0.5" max="50" step="0.1" value="2.5" /><span id="loudnessVal"></span></div>
+    <div class="field"><label for="maxBoost">Max Boost Ceiling</label><input id="maxBoost" type="range" min="1" max="50" step="1" value="50" /><span id="maxBoostVal"></span></div>
+    <div class="field"><label for="drive">Saturation Drive</label><input id="drive" type="range" min="0" max="0.9" step="0.01" value="0.18" /><span id="driveVal"></span></div>
+    <div class="field"><label for="thresholdDb">Comp Threshold (dB)</label><input id="thresholdDb" type="range" min="-55" max="-6" value="-30" /><span id="thresholdDbVal"></span></div>
+    <div class="field"><label for="ratio">Comp Ratio</label><input id="ratio" type="range" min="1" max="20" step="0.5" value="10" /><span id="ratioVal"></span></div>
+    <div class="field"><label for="limiterDb">Limiter Ceiling (dB)</label><input id="limiterDb" type="range" min="-12" max="-0.5" step="0.5" value="-3" /><span id="limiterDbVal"></span></div>
+    <div class="field"><label for="presenceDb">Presence EQ (dB)</label><input id="presenceDb" type="range" min="-12" max="12" value="5" /><span id="presenceDbVal"></span></div>
+    <div class="field"><label for="lowShelfDb">Bass EQ (dB)</label><input id="lowShelfDb" type="range" min="-15" max="15" value="2" /><span id="lowShelfDbVal"></span></div>
+    <div class="field"><label for="highShelfDb">Treble EQ (dB)</label><input id="highShelfDb" type="range" min="-15" max="15" value="4" /><span id="highShelfDbVal"></span></div>
+    <p class="note">Quetta-stable defaults update live. Use Loudness up to 50x carefully; lower Drive/Gain if voice cracks.</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
