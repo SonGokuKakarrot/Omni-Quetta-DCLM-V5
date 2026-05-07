@@ -1,4 +1,44 @@
 const EXT = globalThis.browser ?? globalThis.chrome;
+const HAS_PROMISE_API = typeof globalThis.browser !== "undefined" && EXT === globalThis.browser;
+
+function storageGet(key) {
+  if (HAS_PROMISE_API) return EXT.storage.local.get(key);
+  return new Promise((resolve) => {
+    try {
+      EXT.storage.local.get(key, (res) => {
+        if (EXT.runtime?.lastError) resolve({});
+        else resolve(res || {});
+      });
+    } catch {
+      resolve({});
+    }
+  });
+}
+
+function storageSet(value) {
+  if (HAS_PROMISE_API) return EXT.storage.local.set(value);
+  return new Promise((resolve) => {
+    try {
+      EXT.storage.local.set(value, () => resolve(!EXT.runtime?.lastError));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+function sendMessage(message) {
+  if (HAS_PROMISE_API) return EXT.runtime.sendMessage(message);
+  return new Promise((resolve) => {
+    try {
+      EXT.runtime.sendMessage(message, (res) => {
+        if (EXT.runtime?.lastError) resolve(null);
+        else resolve(res || null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
 const DEFAULTS = {
   enabled: true,
@@ -62,12 +102,12 @@ function applyToControls(config) {
 }
 
 async function saveConfig(config) {
-  await EXT.storage.local.set({ micMaximizerConfig: { ...DEFAULTS, ...config } });
+  await storageSet({ micMaximizerConfig: { ...DEFAULTS, ...config } });
   applyToControls({ ...DEFAULTS, ...config });
 }
 
 async function init() {
-  const stored = await EXT.storage.local.get("micMaximizerConfig");
+  const stored = await storageGet("micMaximizerConfig");
   const config = { ...DEFAULTS, ...(stored.micMaximizerConfig || {}) };
 
   applyToControls(config);
@@ -76,10 +116,10 @@ async function init() {
     const el = document.getElementById(id);
 
     el.addEventListener("input", async () => {
-      const next = await EXT.storage.local.get("micMaximizerConfig");
+      const next = await storageGet("micMaximizerConfig");
       const merged = { ...DEFAULTS, ...(next.micMaximizerConfig || {}) };
       merged[id] = el.type === "checkbox" ? el.checked : Number(el.value);
-      await EXT.storage.local.set({ micMaximizerConfig: merged });
+      await storageSet({ micMaximizerConfig: merged });
       updateLabels();
       updatePresetState(merged);
     });
@@ -97,7 +137,7 @@ async function refreshHookStatus() {
   const el = document.getElementById("hookStatus");
   if (!el) return;
   try {
-    const status = await EXT.runtime.sendMessage({ type: "MICMAX_STATUS_REQUEST" });
+    const status = await sendMessage({ type: "MICMAX_STATUS_REQUEST" });
     const ageMs = status?.lastHeartbeat ? (Date.now() - status.lastHeartbeat) : Infinity;
     if (status?.ok && ageMs < 12000) {
       el.textContent = "Hook status: ACTIVE";
