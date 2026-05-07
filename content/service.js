@@ -1,4 +1,30 @@
 const EXT = globalThis.browser ?? globalThis.chrome;
+const HAS_PROMISE_API = typeof globalThis.browser !== "undefined" && EXT === globalThis.browser;
+
+function storageGet(key) {
+  if (HAS_PROMISE_API) return EXT.storage.local.get(key);
+  return new Promise((resolve) => {
+    try {
+      EXT.storage.local.get(key, (res) => {
+        if (EXT.runtime?.lastError) resolve({});
+        else resolve(res || {});
+      });
+    } catch {
+      resolve({});
+    }
+  });
+}
+
+function sendMessage(message) {
+  if (HAS_PROMISE_API) return EXT.runtime.sendMessage(message);
+  return new Promise((resolve) => {
+    try {
+      EXT.runtime.sendMessage(message, () => resolve(!EXT.runtime?.lastError));
+    } catch {
+      resolve(false);
+    }
+  });
+}
 
 (() => {
   const DEFAULTS = {
@@ -22,12 +48,12 @@ const EXT = globalThis.browser ?? globalThis.chrome;
   let hookReady = false;
 
   function heartbeat() {
-    if (hookReady) EXT.runtime.sendMessage({ type: "MICMAX_HEARTBEAT" }).catch(() => {});
+    if (hookReady) sendMessage({ type: "MICMAX_HEARTBEAT" }).catch(() => {});
   }
 
   async function loadConfig() {
     try {
-      const res = await EXT.storage.local.get("micMaximizerConfig");
+      const res = await storageGet("micMaximizerConfig");
       return { ...DEFAULTS, ...(res.micMaximizerConfig || {}) };
     } catch {
       return { ...DEFAULTS };
