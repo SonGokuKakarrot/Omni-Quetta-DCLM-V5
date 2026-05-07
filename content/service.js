@@ -19,6 +19,11 @@ const EXT = globalThis.browser ?? globalThis.chrome;
   };
 
   const MSG_CFG = "MIC_MAXIMIZER_CONFIG";
+  let hookReady = false;
+
+  function heartbeat() {
+    if (hookReady) EXT.runtime.sendMessage({ type: "MICMAX_HEARTBEAT" }).catch(() => {});
+  }
 
   async function loadConfig() {
     try {
@@ -36,7 +41,11 @@ const EXT = globalThis.browser ?? globalThis.chrome;
   async function sync() { pushConfig(await loadConfig()); }
 
   window.addEventListener("message", (e) => {
-    if (e.source === window && e.data?.type === "MIC_MAXIMIZER_READY") sync();
+    if (e.source === window && e.data?.type === "MIC_MAXIMIZER_READY") {
+      hookReady = true;
+      sync();
+      heartbeat();
+    }
   });
 
   EXT.storage.onChanged.addListener((changes, area) => {
@@ -51,5 +60,5 @@ const EXT = globalThis.browser ?? globalThis.chrome;
 
 
 setInterval(() => {
-  EXT.runtime.sendMessage({ type: "MICMAX_HEARTBEAT" }).catch(() => {});
+  heartbeat();
 }, 5000);
