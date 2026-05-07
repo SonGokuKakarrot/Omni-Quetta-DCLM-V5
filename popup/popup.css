@@ -156,7 +156,7 @@ span { color: var(--text); font-size: 12px; min-width: 40px; text-align: right; 
 }
 #stablePreset.active,
 #extremePreset.active {
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, .24), 0 0 30px var(--accent), 0 0 60px color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .24), 0 0 30px var(--accent), 0 0 60px var(--accent);
 }
 .presetBar button.active::after { content: " ✓"; }
 .presetBar button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
