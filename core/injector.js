@@ -24,7 +24,9 @@
     config: { ...DEFAULTS },
     origMD: null,
     origLegacy: null,
-    pipelines: new Set()
+    pipelines: new Set(),
+    trackMap: new WeakMap(),
+    processedTracks: new WeakSet()
   };
 
   const clamp = (v, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(v)) ? Number(v) : min));
@@ -135,8 +137,11 @@
 
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
+    const outAudioTracks = dst.stream.getAudioTracks();
+    outAudioTracks.forEach((track) => state.processedTracks.add(track));
+
     const out = new MediaStream([
-      ...dst.stream.getAudioTracks(),
+      ...outAudioTracks,
       ...stream.getTracks().filter((track) => track.kind !== "audio")
     ]);
 
@@ -174,6 +179,77 @@
     return "audio" in constraints ? Boolean(constraints.audio) : true;
   }
 
+
+
+  function processedStreamFor(originalStream, rawTrack, processedTrack) {
+    if (!originalStream || typeof originalStream.getTracks !== "function") return new MediaStream([processedTrack]);
+    return new MediaStream(originalStream.getTracks().map((track) => track === rawTrack ? processedTrack : track));
+  }
+
+  function processAudioTrack(track) {
+    if (!track || track.kind !== "audio" || state.processedTracks.has(track)) return track;
+    const existing = state.trackMap.get(track);
+    if (existing && existing.readyState !== "ended") return existing;
+
+    const processedStream = build(new MediaStream([track]), state.config);
+    const processedTrack = processedStream.getAudioTracks()[0] || track;
+    if (processedTrack !== track) {
+      state.processedTracks.add(processedTrack);
+      state.trackMap.set(track, processedTrack);
+      track.addEventListener("ended", () => {
+        try { processedTrack.stop(); } catch (_) {}
+      }, { once: true });
+    }
+    return processedTrack;
+  }
+
+  function patchPeerConnectionPaths() {
+    const PC = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+    if (PC?.prototype && !PC.prototype.__micMaxPcPatched) {
+      const originalAddTrack = PC.prototype.addTrack;
+      if (typeof originalAddTrack === "function") {
+        PC.prototype.addTrack = function(track, ...streams) {
+          if (cfg().enabled && track?.kind === "audio") {
+            const processedTrack = processAudioTrack(track);
+            const patchedStreams = streams.length
+              ? streams.map((stream) => processedStreamFor(stream, track, processedTrack))
+              : [new MediaStream([processedTrack])];
+            return originalAddTrack.call(this, processedTrack, ...patchedStreams);
+          }
+          return originalAddTrack.call(this, track, ...streams);
+        };
+      }
+
+      const originalAddTransceiver = PC.prototype.addTransceiver;
+      if (typeof originalAddTransceiver === "function") {
+        PC.prototype.addTransceiver = function(trackOrKind, init = undefined) {
+          if (cfg().enabled && trackOrKind?.kind === "audio") {
+            const processedTrack = processAudioTrack(trackOrKind);
+            const patchedInit = init?.streams
+              ? { ...init, streams: init.streams.map((stream) => processedStreamFor(stream, trackOrKind, processedTrack)) }
+              : init;
+            return originalAddTransceiver.call(this, processedTrack, patchedInit);
+          }
+          return originalAddTransceiver.call(this, trackOrKind, init);
+        };
+      }
+
+      PC.prototype.__micMaxPcPatched = true;
+    }
+
+    const Sender = window.RTCRtpSender;
+    if (Sender?.prototype && !Sender.prototype.__micMaxSenderPatched) {
+      const originalReplaceTrack = Sender.prototype.replaceTrack;
+      if (typeof originalReplaceTrack === "function") {
+        Sender.prototype.replaceTrack = function(track) {
+          const nextTrack = cfg().enabled && track?.kind === "audio" ? processAudioTrack(track) : track;
+          return originalReplaceTrack.call(this, nextTrack);
+        };
+      }
+      Sender.prototype.__micMaxSenderPatched = true;
+    }
+  }
+
   async function getStreamWithFallback(orig, constraints, ctx) {
     try { return await orig.call(ctx, normalizeConstraints(constraints)); }
     catch (_) { return orig.call(ctx, constraints); }
@@ -185,6 +261,8 @@
     try { return build(s, state.config); }
     catch (_) { return s; }
   }
+
+  patchPeerConnectionPaths();
 
   if (navigator.mediaDevices?.getUserMedia) {
     state.origMD = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
