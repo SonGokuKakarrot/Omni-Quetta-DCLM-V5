@@ -6,12 +6,22 @@
   <title>Mic Maximizer</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
-<body>
+<body data-theme="custom">
   <main>
     <h1>Mic Maximizer</h1>
-    <label><input id="enabled" type="checkbox" /> Enabled</label>
+    <label class="enableToggle"><input id="enabled" type="checkbox" /> Enabled</label>
     <p id="hookStatus" class="status">Hook status: checking...</p>
-    <div class="presetBar"><button id="stablePreset" type="button">Stable Clear</button><button id="extremePreset" type="button">50x Boost</button></div>
+    <section class="presets" aria-labelledby="presetTitle">
+      <div class="presetHeader">
+        <h2 id="presetTitle">Presets</h2>
+        <span>Click one to apply</span>
+      </div>
+      <div class="presetBar">
+        <button id="stablePreset" type="button" aria-label="Apply Stable Clear preset">Stable Clear</button>
+        <button id="extremePreset" type="button" aria-label="Apply 50x Boost preset">50x Boost</button>
+      </div>
+      <p class="presetHelp">These are quick preset buttons, not required setup steps. When you click one, the whole popup changes colour to show that preset is active.</p>
+    </section>
     <div class="field"><label for="gainDb">Gain (dB)</label><input id="gainDb" type="range" min="0" max="48" value="18" /><span id="gainDbVal"></span></div>
     <div class="field"><label for="loudness">Loudness Drive</label><input id="loudness" type="range" min="0.5" max="50" step="0.1" value="2.5" /><span id="loudnessVal"></span></div>
     <div class="field"><label for="maxBoost">Max Boost Ceiling</label><input id="maxBoost" type="range" min="1" max="50" step="1" value="50" /><span id="maxBoostVal"></span></div>
