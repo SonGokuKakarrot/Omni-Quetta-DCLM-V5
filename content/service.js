@@ -1,6 +1,28 @@
 (() => {
   const EXT = globalThis.browser ?? globalThis.chrome;
+  if (!EXT?.runtime || !EXT?.storage?.local) return;
+
   const HAS_PROMISE_API = typeof globalThis.browser !== "undefined" && EXT === globalThis.browser;
+
+  const DEFAULTS = {
+    enabled: true,
+    gainDb: 60,
+    thresholdDb: -50,
+    knee: 40,
+    ratio: 20,
+    attack: 0.0001,
+    release: 0.05,
+    lowShelfDb: 12,
+    presenceDb: 15,
+    highShelfDb: 10,
+    limiterDb: -0.1,
+    drive: 1.0,
+    loudness: 10.0,
+    maxBoost: 2000
+  };
+
+  const MSG_CFG = "MIC_MAXIMIZER_CONFIG";
+  let hookReady = false;
 
   function storageGet(key) {
     if (HAS_PROMISE_API) return EXT.storage.local.get(key);
@@ -10,7 +32,7 @@
           if (EXT.runtime?.lastError) resolve({});
           else resolve(res || {});
         });
-      } catch {
+      } catch (_) {
         resolve({});
       }
     });
@@ -21,53 +43,36 @@
     return new Promise((resolve) => {
       try {
         EXT.runtime.sendMessage(message, () => resolve(!EXT.runtime?.lastError));
-      } catch {
+      } catch (_) {
         resolve(false);
       }
     });
   }
 
-  const DEFAULTS = {
-    enabled: true,
-    gainDb: 18,
-    thresholdDb: -30,
-    knee: 26,
-    ratio: 10,
-    attack: 0.002,
-    release: 0.16,
-    lowShelfDb: 2,
-    presenceDb: 5,
-    highShelfDb: 4,
-    limiterDb: -3,
-    drive: 0.18,
-    loudness: 2.5,
-    maxBoost: 50
-  };
-
-  const MSG_CFG = "MIC_MAXIMIZER_CONFIG";
-  let hookReady = false;
-
-  function heartbeat() {
-    if (hookReady) sendMessage({ type: "MICMAX_HEARTBEAT" }).catch(() => {});
+  function pushConfig(config) {
+    window.postMessage({ type: MSG_CFG, payload: config }, "*");
   }
 
   async function loadConfig() {
     try {
       const res = await storageGet("micMaximizerConfig");
       return { ...DEFAULTS, ...(res.micMaximizerConfig || {}) };
-    } catch {
+    } catch (_) {
       return { ...DEFAULTS };
     }
   }
 
-  function pushConfig(cfg) {
-    window.postMessage({ type: MSG_CFG, payload: cfg }, "*");
+  async function sync() {
+    pushConfig(await loadConfig());
   }
 
-  async function sync() { pushConfig(await loadConfig()); }
+  function heartbeat() {
+    if (!hookReady) return;
+    sendMessage({ type: "MICMAX_HEARTBEAT" }).catch(() => {});
+  }
 
-  window.addEventListener("message", (e) => {
-    if (e.source === window && e.data?.type === "MIC_MAXIMIZER_READY") {
+  window.addEventListener("message", (event) => {
+    if (event.source === window && event.data?.type === "MIC_MAXIMIZER_READY") {
       hookReady = true;
       sync();
       heartbeat();
@@ -80,7 +85,7 @@
     }
   });
 
-  setInterval(sync, 4000);
+  setInterval(sync, 3500);
   setInterval(heartbeat, 5000);
   sync();
 })();
