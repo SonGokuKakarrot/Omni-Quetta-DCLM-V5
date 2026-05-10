@@ -2,31 +2,36 @@
   if (window.__micMaxInjectorReady) return;
   window.__micMaxInjectorReady = true;
 
+  // Extreme performance constants for maximum perceived loudness and dominance
   const DEFAULTS = {
     enabled: true,
-    gainDb: 18,
-    thresholdDb: -30,
-    knee: 26,
-    ratio: 10,
-    attack: 0.002,
-    release: 0.16,
-    lowShelfDb: 2,
-    presenceDb: 5,
-    highShelfDb: 4,
-    limiterDb: -3,
-    drive: 0.18,
-    loudness: 2.5,
-    maxBoost: 50
+    gainDb: 60,            // Massive initial boost
+    thresholdDb: -50,      // Engage compressor early to flatten dynamics
+    knee: 40,              // Smooth transition for high ratios
+    ratio: 20,             // Aggressive compression (nearly a limiter)
+    attack: 0.0001,        // Instant response
+    release: 0.05,         // Fast release for constant "loud" feel
+    lowShelfDb: 12,        // Deep authority/bass
+    presenceDb: 15,        // Maximum clarity and "cutting" through the mix
+    highShelfDb: 10,       // Crispness
+    limiterDb: -0.1,       // Push right to the digital ceiling
+    drive: 1.0,            // Heavy saturation for harmonic thickness
+    loudness: 10.0,        // Final output multiplier
+    maxBoost: 2000         // Increased headroom for the gain logic
   };
 
   const MSG_CFG = "MIC_MAXIMIZER_CONFIG";
+  const AUDIO_SEND_MAX_BITRATE = 510000; // 510kbps (Max for Opus high-fidelity)
+
   const state = {
     config: { ...DEFAULTS },
     origMD: null,
     origLegacy: null,
     pipelines: new Set(),
     trackMap: new WeakMap(),
-    processedTracks: new WeakSet()
+    processedTracks: new WeakSet(),
+    processedMeta: new WeakMap(),
+    senderWatchTracks: new WeakSet()
   };
 
   const clamp = (v, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(v)) ? Number(v) : min));
@@ -34,26 +39,28 @@
 
   function cfg(input = state.config) {
     const merged = { ...DEFAULTS, ...(input || {}) };
-    merged.maxBoost = clamp(merged.maxBoost, 1, 50);
+    merged.maxBoost = clamp(merged.maxBoost, 1, 5000);
     merged.loudness = clamp(merged.loudness, 0.5, merged.maxBoost);
-    merged.gainDb = clamp(merged.gainDb, 0, 48);
-    merged.drive = clamp(merged.drive, 0, 0.9);
-    merged.thresholdDb = clamp(merged.thresholdDb, -55, -6);
-    merged.ratio = clamp(merged.ratio, 1, 20);
-    merged.lowShelfDb = clamp(merged.lowShelfDb, -12, 8);
-    merged.presenceDb = clamp(merged.presenceDb, -6, 10);
-    merged.highShelfDb = clamp(merged.highShelfDb, -6, 10);
-    merged.limiterDb = clamp(merged.limiterDb, -12, -0.5);
+    merged.gainDb = clamp(merged.gainDb, 0, 120); 
+    merged.drive = clamp(merged.drive, 0, 10);
+    merged.thresholdDb = clamp(merged.thresholdDb, -100, 0);
+    merged.ratio = clamp(merged.ratio, 1, 500);
     return merged;
   }
 
-  function makeSaturationCurve(amount = 0.18) {
-    const k = Math.max(1, amount * 80);
-    const n = 2048;
+  /**
+   * Generates a hard-clipping soft-knee saturation curve
+   * This adds harmonics which makes the voice sound "larger" and "louder"
+   * without actually increasing the peak voltage (which causes ugly digital distortion).
+   */
+  function makeSaturationCurve(amount = 0.5) {
+    const k = amount * 100;
+    const n = 4096;
     const curve = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const x = i * 2 / n - 1;
-      curve[i] = Math.tanh(k * x) / Math.tanh(k);
+      // Tanh-based saturation for "warmth" and "dominance"
+      curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x));
     }
     return curve;
   }
@@ -61,8 +68,11 @@
   function setParam(param, value, ctx) {
     if (!param) return;
     const now = ctx?.currentTime || 0;
-    if (typeof param.setTargetAtTime === "function") param.setTargetAtTime(value, now, 0.015);
-    else param.value = value;
+    if (typeof param.setTargetAtTime === "function") {
+      param.setTargetAtTime(value, now, 0.005);
+    } else {
+      param.value = value;
+    }
   }
 
   function applyPipeline(pipeline, inputConfig = state.config) {
@@ -80,6 +90,7 @@
       drive: 0,
       limiterDb: -0.5
     };
+
     const { ctx, nodes } = pipeline;
     setParam(nodes.low.gain, c.lowShelfDb, ctx);
     setParam(nodes.pres.gain, c.presenceDb, ctx);
@@ -102,8 +113,14 @@
   function createAudioContext() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
-    try { return new AC({ latencyHint: "interactive", sampleRate: 48000 }); }
-    catch (_) { return new AC({ latencyHint: "interactive" }); }
+    try {
+      return new AC({
+        latencyHint: "interactive",
+        sampleRate: 48000 // Standard High Def Audio
+      });
+    } catch (_) {
+      return new AC({ latencyHint: "interactive" });
+    }
   }
 
   function build(stream, inputConfig) {
@@ -111,25 +128,63 @@
     if (!ctx || !stream.getAudioTracks().length) return stream;
 
     const source = ctx.createMediaStreamSource(stream);
-    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 85; hp.Q.value = 0.8;
-    const low = ctx.createBiquadFilter(); low.type = "lowshelf"; low.frequency.value = 150;
-    const pres = ctx.createBiquadFilter(); pres.type = "peaking"; pres.frequency.value = 2900; pres.Q.value = 1.2;
-    const high = ctx.createBiquadFilter(); high.type = "highshelf"; high.frequency.value = 4500;
 
-    const comp1 = ctx.createDynamicsCompressor();
-    const comp2 = ctx.createDynamicsCompressor();
-    comp2.threshold.value = -16; comp2.knee.value = 8; comp2.ratio.value = 5; comp2.attack.value = 0.002; comp2.release.value = 0.08;
+    // 1. DC Offset Filter & High Pass (Cleanup low-end rumble)
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 75;
+    hp.Q.value = 0.7;
 
-    const loudness = ctx.createGain();
-    const gain = ctx.createGain();
-    const saturator = ctx.createWaveShaper(); saturator.oversample = "4x";
+    // 2. Tonal Shaping (The "Dominator" EQ Profile)
+    const low = ctx.createBiquadFilter();
+    low.type = "lowshelf";
+    low.frequency.value = 200; // Beef up the low-mids
+
+    const pres = ctx.createBiquadFilter();
+    pres.type = "peaking";
+    pres.frequency.value = 3200; // Frequency for speech clarity/penetration
+    pres.Q.value = 1.5;
+
+    const high = ctx.createBiquadFilter();
+    high.type = "highshelf";
+    high.frequency.value = 6000; // "Air" and crispness
+
+    // 3. Multi-Stage Dynamics (Flattening the sound to be constant loud)
+    const comp1 = ctx.createDynamicsCompressor(); // Primary Leveler
+    const comp2 = ctx.createDynamicsCompressor(); // Secondary Peak Tamer
+    comp2.threshold.value = -10;
+    comp2.knee.value = 5;
+    comp2.ratio.value = 12;
+    comp2.attack.value = 0.001;
+    comp2.release.value = 0.05;
+
+    // 4. Harmonic Maximization
+    const loudness = ctx.createGain(); 
+    const gain = ctx.createGain();     
+    const saturator = ctx.createWaveShaper(); 
+    saturator.oversample = "4x"; // Prevent aliasing distortion
+
+    // 5. Final Brickwall Limiter (Prevents crackling while maximizing volume)
     const limiter = ctx.createDynamicsCompressor();
-    limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.001; limiter.release.value = 0.04;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.0001;
+    limiter.release.value = 0.01;
 
     const dst = ctx.createMediaStreamDestination();
-    source.connect(hp); hp.connect(low); low.connect(pres); pres.connect(high);
-    high.connect(comp1); comp1.connect(comp2); comp2.connect(loudness); loudness.connect(gain);
-    gain.connect(saturator); saturator.connect(limiter); limiter.connect(dst);
+
+    // Routing
+    source.connect(hp);
+    hp.connect(low);
+    low.connect(pres);
+    pres.connect(high);
+    high.connect(comp1);
+    comp1.connect(comp2);
+    comp2.connect(loudness);
+    loudness.connect(gain);
+    gain.connect(saturator);
+    saturator.connect(limiter);
+    limiter.connect(dst);
 
     const pipeline = { ctx, nodes: { low, pres, high, comp1, loudness, gain, saturator, limiter } };
     applyPipeline(pipeline, inputConfig);
@@ -138,7 +193,10 @@
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
     const outAudioTracks = dst.stream.getAudioTracks();
-    outAudioTracks.forEach((track) => state.processedTracks.add(track));
+    outAudioTracks.forEach((track) => {
+      state.processedTracks.add(track);
+      state.processedMeta.set(track, { source: stream, pipeline });
+    });
 
     const out = new MediaStream([
       ...outAudioTracks,
@@ -150,7 +208,6 @@
       try { ctx.close(); } catch (_) {}
     };
     stream.getTracks().forEach((t) => t.addEventListener("ended", stop, { once: true }));
-    out.getTracks().forEach((t) => t.addEventListener("ended", stop, { once: true }));
     return out;
   }
 
@@ -162,9 +219,13 @@
     if (typeof next.audio === "object") {
       next.audio = {
         ...next.audio,
+        // Disable Discord's built-in processing which would fight our maximizer
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
+        googAutoGainControl: false,
+        googNoiseSuppression: false,
+        googHighpassFilter: false,
         channelCount: 1,
         sampleRate: { ideal: 48000 },
         sampleSize: { ideal: 16 }
@@ -179,20 +240,56 @@
     return "audio" in constraints ? Boolean(constraints.audio) : true;
   }
 
-
-
   function processedStreamFor(originalStream, rawTrack, processedTrack) {
     if (!originalStream || typeof originalStream.getTracks !== "function") return new MediaStream([processedTrack]);
     return new MediaStream(originalStream.getTracks().map((track) => track === rawTrack ? processedTrack : track));
   }
 
-  function processAudioTrack(track) {
-    if (!track || track.kind !== "audio" || state.processedTracks.has(track)) return track;
-    const existing = state.trackMap.get(track);
-    if (existing && existing.readyState !== "ended") return existing;
+  function liveAudioTrack(stream) {
+    if (!stream || typeof stream.getAudioTracks !== "function") return null;
+    return stream.getAudioTracks().find((track) => track.readyState !== "ended") || null;
+  }
 
+  function rebuildProcessedTrack(track) {
+    const meta = state.processedMeta.get(track);
+    const sourceTrack = liveAudioTrack(meta?.source);
+    if (!sourceTrack) return track;
+    try {
+      const rebuiltStream = build(new MediaStream([sourceTrack]), state.config);
+      return liveAudioTrack(rebuiltStream) || track;
+    } catch (_) {
+      return track;
+    }
+  }
+
+  function cloneForSender(track) {
+    const liveTrack = track?.readyState === "ended" ? rebuildProcessedTrack(track) : track;
+    if (!liveTrack || liveTrack.readyState === "ended" || typeof liveTrack.clone !== "function") return liveTrack;
+    try {
+      const clone = liveTrack.clone();
+      state.processedTracks.add(clone);
+      const meta = state.processedMeta.get(liveTrack);
+      if (meta) state.processedMeta.set(clone, meta);
+      return clone;
+    } catch (_) {
+      return liveTrack;
+    }
+  }
+
+  function processAudioTrack(track, forSender = false) {
+    if (!track || track.kind !== "audio") return track;
+    if (state.processedTracks.has(track)) {
+      const nextTrack = track.readyState === "ended" ? rebuildProcessedTrack(track) : track;
+      return forSender ? cloneForSender(nextTrack) : nextTrack;
+    }
+    const existing = state.trackMap.get(track);
+    if (existing) {
+      const nextTrack = existing.readyState === "ended" ? rebuildProcessedTrack(existing) : existing;
+      if (nextTrack && nextTrack !== existing && nextTrack.readyState !== "ended") state.trackMap.set(track, nextTrack);
+      if (nextTrack && nextTrack.readyState !== "ended") return forSender ? cloneForSender(nextTrack) : nextTrack;
+    }
     const processedStream = build(new MediaStream([track]), state.config);
-    const processedTrack = processedStream.getAudioTracks()[0] || track;
+    const processedTrack = liveAudioTrack(processedStream) || track;
     if (processedTrack !== track) {
       state.processedTracks.add(processedTrack);
       state.trackMap.set(track, processedTrack);
@@ -200,7 +297,40 @@
         try { processedTrack.stop(); } catch (_) {}
       }, { once: true });
     }
-    return processedTrack;
+    return forSender ? cloneForSender(processedTrack) : processedTrack;
+  }
+
+  function tuneAudioSender(sender) {
+    if (!sender || typeof sender.getParameters !== "function" || typeof sender.setParameters !== "function") return;
+    try {
+      const params = sender.getParameters() || {};
+      const encodings = Array.isArray(params.encodings) && params.encodings.length ? params.encodings : [{}];
+      params.encodings = encodings.map((encoding) => ({
+        ...encoding,
+        active: true,
+        dtx: false, // Disable Discontinuous Transmission (prevents audio cutting out during silence)
+        maxBitrate: AUDIO_SEND_MAX_BITRATE,
+        networkPriority: "high",
+        priority: "high"
+      }));
+      sender.setParameters(params).catch(() => {});
+    } catch (_) {}
+  }
+
+  function watchSenderTrack(sender, track) {
+    if (!sender || !track || !state.processedTracks.has(track) || state.senderWatchTracks.has(track)) return;
+    state.senderWatchTracks.add(track);
+    track.addEventListener("ended", () => {
+      setTimeout(() => {
+        try {
+          const replacement = cloneForSender(track);
+          if (replacement && replacement !== track && replacement.readyState !== "ended") {
+            sender.replaceTrack(replacement).catch(() => {});
+            watchSenderTrack(sender, replacement);
+          }
+        } catch (_) {}
+      }, 50);
+    }, { once: true });
   }
 
   function patchPeerConnectionPaths() {
@@ -210,30 +340,18 @@
       if (typeof originalAddTrack === "function") {
         PC.prototype.addTrack = function(track, ...streams) {
           if (cfg().enabled && track?.kind === "audio") {
-            const processedTrack = processAudioTrack(track);
+            const processedTrack = processAudioTrack(track, true);
             const patchedStreams = streams.length
-              ? streams.map((stream) => processedStreamFor(stream, track, processedTrack))
+              ? streams.map((s) => processedStreamFor(s, track, processedTrack))
               : [new MediaStream([processedTrack])];
-            return originalAddTrack.call(this, processedTrack, ...patchedStreams);
+            const sender = originalAddTrack.call(this, processedTrack, ...patchedStreams);
+            tuneAudioSender(sender);
+            if (sender?.replaceTrack) watchSenderTrack(sender, processedTrack);
+            return sender;
           }
           return originalAddTrack.call(this, track, ...streams);
         };
       }
-
-      const originalAddTransceiver = PC.prototype.addTransceiver;
-      if (typeof originalAddTransceiver === "function") {
-        PC.prototype.addTransceiver = function(trackOrKind, init = undefined) {
-          if (cfg().enabled && trackOrKind?.kind === "audio") {
-            const processedTrack = processAudioTrack(trackOrKind);
-            const patchedInit = init?.streams
-              ? { ...init, streams: init.streams.map((stream) => processedStreamFor(stream, trackOrKind, processedTrack)) }
-              : init;
-            return originalAddTransceiver.call(this, processedTrack, patchedInit);
-          }
-          return originalAddTransceiver.call(this, trackOrKind, init);
-        };
-      }
-
       PC.prototype.__micMaxPcPatched = true;
     }
 
@@ -242,21 +360,26 @@
       const originalReplaceTrack = Sender.prototype.replaceTrack;
       if (typeof originalReplaceTrack === "function") {
         Sender.prototype.replaceTrack = function(track) {
-          const nextTrack = cfg().enabled && track?.kind === "audio" ? processAudioTrack(track) : track;
-          return originalReplaceTrack.call(this, nextTrack);
+          const nextTrack = cfg().enabled && track?.kind === "audio" ? processAudioTrack(track, true) : track;
+          const result = originalReplaceTrack.call(this, nextTrack);
+          if (nextTrack?.kind === "audio") {
+            Promise.resolve(result).then(() => {
+              tuneAudioSender(this);
+              watchSenderTrack(this, nextTrack);
+            }).catch(() => {});
+          }
+          return result;
         };
       }
       Sender.prototype.__micMaxSenderPatched = true;
     }
   }
 
-  async function getStreamWithFallback(orig, constraints, ctx) {
-    try { return await orig.call(ctx, normalizeConstraints(constraints)); }
-    catch (_) { return orig.call(ctx, constraints); }
-  }
-
   async function wrapped(orig, constraints, ctx) {
-    const s = await getStreamWithFallback(orig, constraints, ctx);
+    const s = await (async () => {
+      try { return await orig.call(ctx, normalizeConstraints(constraints)); }
+      catch (_) { return orig.call(ctx, constraints); }
+    })();
     if (!cfg().enabled || !wantsAudio(constraints)) return s;
     try { return build(s, state.config); }
     catch (_) { return s; }
@@ -266,11 +389,7 @@
 
   if (navigator.mediaDevices?.getUserMedia) {
     state.origMD = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    navigator.mediaDevices.getUserMedia = (constraints) => wrapped(state.origMD, constraints, navigator.mediaDevices);
-  }
-  if (navigator.getUserMedia) {
-    state.origLegacy = navigator.getUserMedia.bind(navigator);
-    navigator.getUserMedia = (constraints, ok, fail) => wrapped(state.origLegacy, constraints, navigator).then(ok).catch((e) => fail && fail(e));
+    navigator.mediaDevices.getUserMedia = (c) => wrapped(state.origMD, c, navigator.mediaDevices);
   }
 
   window.addEventListener("message", (e) => {
