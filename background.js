@@ -1,7 +1,7 @@
-const EXT = globalThis.browser ?? globalThis.chrome;
+// Omni DC Lord background module.
+// Local diagnostics only: no remote fetches, no webhooks, no token/session reads.
 
-// background.js
-// Safe extension background module: no remote webhook calls, no scraping exfiltration.
+const EXT = globalThis.browser ?? globalThis.chrome;
 
 const state = {
   installedAt: Date.now(),
@@ -9,22 +9,28 @@ const state = {
   hookActiveTabs: new Set()
 };
 
+function reply(sendResponse, payload) {
+  try {
+    sendResponse(payload);
+  } catch (_) {}
+}
+
 EXT.runtime.onInstalled.addListener(() => {
-  console.log('[Mic Maximizer] background installed');
+  console.log("[Omni DC Lord] installed");
 });
 
 EXT.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || typeof message !== 'object') return false;
+  if (!message || typeof message !== "object") return false;
 
-  if (message.type === 'MICMAX_HEARTBEAT') {
+  if (message.type === "MICMAX_HEARTBEAT") {
     state.lastHeartbeat = Date.now();
     if (sender?.tab?.id != null) state.hookActiveTabs.add(sender.tab.id);
-    sendResponse({ ok: true });
+    reply(sendResponse, { ok: true });
     return false;
   }
 
-  if (message.type === 'MICMAX_STATUS_REQUEST') {
-    sendResponse({
+  if (message.type === "MICMAX_STATUS_REQUEST") {
+    reply(sendResponse, {
       ok: true,
       installedAt: state.installedAt,
       lastHeartbeat: state.lastHeartbeat,
@@ -33,10 +39,10 @@ EXT.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  if (message.type === 'MICMAX_RESET_STATUS') {
+  if (message.type === "MICMAX_RESET_STATUS") {
     state.hookActiveTabs.clear();
     state.lastHeartbeat = 0;
-    sendResponse({ ok: true });
+    reply(sendResponse, { ok: true });
     return false;
   }
 
