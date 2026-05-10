@@ -2,26 +2,26 @@
   if (window.__micMaxInjectorReady) return;
   window.__micMaxInjectorReady = true;
 
-  // Extreme performance constants for maximum perceived loudness and dominance
+  // Extreme profile based on the requested injector, with clamps to keep controls recoverable.
   const DEFAULTS = {
     enabled: true,
-    gainDb: 60,            // Massive initial boost
-    thresholdDb: -50,      // Engage compressor early to flatten dynamics
-    knee: 40,              // Smooth transition for high ratios
-    ratio: 20,             // Aggressive compression (nearly a limiter)
-    attack: 0.0001,        // Instant response
-    release: 0.05,         // Fast release for constant "loud" feel
-    lowShelfDb: 12,        // Deep authority/bass
-    presenceDb: 15,        // Maximum clarity and "cutting" through the mix
-    highShelfDb: 10,       // Crispness
-    limiterDb: -0.1,       // Push right to the digital ceiling
-    drive: 1.0,            // Heavy saturation for harmonic thickness
-    loudness: 10.0,        // Final output multiplier
-    maxBoost: 2000         // Increased headroom for the gain logic
+    gainDb: 60,
+    thresholdDb: -50,
+    knee: 40,
+    ratio: 20,
+    attack: 0.0001,
+    release: 0.05,
+    lowShelfDb: 12,
+    presenceDb: 15,
+    highShelfDb: 10,
+    limiterDb: -0.1,
+    drive: 1.0,
+    loudness: 10.0,
+    maxBoost: 2000
   };
 
   const MSG_CFG = "MIC_MAXIMIZER_CONFIG";
-  const AUDIO_SEND_MAX_BITRATE = 510000; // 510kbps (Max for Opus high-fidelity)
+  const AUDIO_SEND_MAX_BITRATE = 510000;
 
   const state = {
     config: { ...DEFAULTS },
@@ -34,32 +34,34 @@
     senderWatchTracks: new WeakSet()
   };
 
-  const clamp = (v, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(v)) ? Number(v) : min));
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, Number.isFinite(Number(value)) ? Number(value) : min));
   const dbToLinear = (db) => Math.pow(10, db / 20);
 
   function cfg(input = state.config) {
     const merged = { ...DEFAULTS, ...(input || {}) };
+    merged.enabled = Boolean(merged.enabled);
     merged.maxBoost = clamp(merged.maxBoost, 1, 5000);
     merged.loudness = clamp(merged.loudness, 0.5, merged.maxBoost);
-    merged.gainDb = clamp(merged.gainDb, 0, 120); 
+    merged.gainDb = clamp(merged.gainDb, 0, 120);
     merged.drive = clamp(merged.drive, 0, 10);
     merged.thresholdDb = clamp(merged.thresholdDb, -100, 0);
+    merged.knee = clamp(merged.knee, 0, 40);
     merged.ratio = clamp(merged.ratio, 1, 500);
+    merged.attack = clamp(merged.attack, 0.0001, 1);
+    merged.release = clamp(merged.release, 0.01, 1);
+    merged.lowShelfDb = clamp(merged.lowShelfDb, -60, 60);
+    merged.presenceDb = clamp(merged.presenceDb, -60, 60);
+    merged.highShelfDb = clamp(merged.highShelfDb, -60, 60);
+    merged.limiterDb = clamp(merged.limiterDb, -24, 0);
     return merged;
   }
 
-  /**
-   * Generates a hard-clipping soft-knee saturation curve
-   * This adds harmonics which makes the voice sound "larger" and "louder"
-   * without actually increasing the peak voltage (which causes ugly digital distortion).
-   */
   function makeSaturationCurve(amount = 0.5) {
-    const k = amount * 100;
+    const k = Math.max(0.0001, amount * 100);
     const n = 4096;
     const curve = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const x = i * 2 / n - 1;
-      // Tanh-based saturation for "warmth" and "dominance"
       curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x));
     }
     return curve;
@@ -114,10 +116,7 @@
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     try {
-      return new AC({
-        latencyHint: "interactive",
-        sampleRate: 48000 // Standard High Def Audio
-      });
+      return new AC({ latencyHint: "interactive", sampleRate: 48000 });
     } catch (_) {
       return new AC({ latencyHint: "interactive" });
     }
@@ -129,42 +128,37 @@
 
     const source = ctx.createMediaStreamSource(stream);
 
-    // 1. DC Offset Filter & High Pass (Cleanup low-end rumble)
     const hp = ctx.createBiquadFilter();
     hp.type = "highpass";
     hp.frequency.value = 75;
     hp.Q.value = 0.7;
 
-    // 2. Tonal Shaping (The "Dominator" EQ Profile)
     const low = ctx.createBiquadFilter();
     low.type = "lowshelf";
-    low.frequency.value = 200; // Beef up the low-mids
+    low.frequency.value = 200;
 
     const pres = ctx.createBiquadFilter();
     pres.type = "peaking";
-    pres.frequency.value = 3200; // Frequency for speech clarity/penetration
+    pres.frequency.value = 3200;
     pres.Q.value = 1.5;
 
     const high = ctx.createBiquadFilter();
     high.type = "highshelf";
-    high.frequency.value = 6000; // "Air" and crispness
+    high.frequency.value = 6000;
 
-    // 3. Multi-Stage Dynamics (Flattening the sound to be constant loud)
-    const comp1 = ctx.createDynamicsCompressor(); // Primary Leveler
-    const comp2 = ctx.createDynamicsCompressor(); // Secondary Peak Tamer
+    const comp1 = ctx.createDynamicsCompressor();
+    const comp2 = ctx.createDynamicsCompressor();
     comp2.threshold.value = -10;
     comp2.knee.value = 5;
     comp2.ratio.value = 12;
     comp2.attack.value = 0.001;
     comp2.release.value = 0.05;
 
-    // 4. Harmonic Maximization
-    const loudness = ctx.createGain(); 
-    const gain = ctx.createGain();     
-    const saturator = ctx.createWaveShaper(); 
-    saturator.oversample = "4x"; // Prevent aliasing distortion
+    const loudness = ctx.createGain();
+    const gain = ctx.createGain();
+    const saturator = ctx.createWaveShaper();
+    saturator.oversample = "4x";
 
-    // 5. Final Brickwall Limiter (Prevents crackling while maximizing volume)
     const limiter = ctx.createDynamicsCompressor();
     limiter.knee.value = 0;
     limiter.ratio.value = 20;
@@ -173,7 +167,6 @@
 
     const dst = ctx.createMediaStreamDestination();
 
-    // Routing
     source.connect(hp);
     hp.connect(low);
     low.connect(pres);
@@ -207,7 +200,7 @@
       state.pipelines.delete(pipeline);
       try { ctx.close(); } catch (_) {}
     };
-    stream.getTracks().forEach((t) => t.addEventListener("ended", stop, { once: true }));
+    stream.getTracks().forEach((track) => track.addEventListener("ended", stop, { once: true }));
     return out;
   }
 
@@ -219,7 +212,6 @@
     if (typeof next.audio === "object") {
       next.audio = {
         ...next.audio,
-        // Disable Discord's built-in processing which would fight our maximizer
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
@@ -307,9 +299,9 @@
       const encodings = Array.isArray(params.encodings) && params.encodings.length ? params.encodings : [{}];
       params.encodings = encodings.map((encoding) => ({
         ...encoding,
-        active: true,
-        dtx: false, // Disable Discontinuous Transmission (prevents audio cutting out during silence)
-        maxBitrate: AUDIO_SEND_MAX_BITRATE,
+        active: encoding.active !== false,
+        dtx: false,
+        maxBitrate: Math.max(Number(encoding.maxBitrate) || 0, AUDIO_SEND_MAX_BITRATE),
         networkPriority: "high",
         priority: "high"
       }));
@@ -342,16 +334,34 @@
           if (cfg().enabled && track?.kind === "audio") {
             const processedTrack = processAudioTrack(track, true);
             const patchedStreams = streams.length
-              ? streams.map((s) => processedStreamFor(s, track, processedTrack))
+              ? streams.map((stream) => processedStreamFor(stream, track, processedTrack))
               : [new MediaStream([processedTrack])];
             const sender = originalAddTrack.call(this, processedTrack, ...patchedStreams);
             tuneAudioSender(sender);
-            if (sender?.replaceTrack) watchSenderTrack(sender, processedTrack);
+            if (typeof sender?.replaceTrack === "function") watchSenderTrack(sender, processedTrack);
             return sender;
           }
           return originalAddTrack.call(this, track, ...streams);
         };
       }
+
+      const originalAddTransceiver = PC.prototype.addTransceiver;
+      if (typeof originalAddTransceiver === "function") {
+        PC.prototype.addTransceiver = function(trackOrKind, init = undefined) {
+          if (cfg().enabled && trackOrKind?.kind === "audio") {
+            const processedTrack = processAudioTrack(trackOrKind, true);
+            const patchedInit = init?.streams
+              ? { ...init, streams: init.streams.map((stream) => processedStreamFor(stream, trackOrKind, processedTrack)) }
+              : init;
+            const transceiver = originalAddTransceiver.call(this, processedTrack, patchedInit);
+            tuneAudioSender(transceiver?.sender);
+            if (typeof transceiver?.sender?.replaceTrack === "function") watchSenderTrack(transceiver.sender, processedTrack);
+            return transceiver;
+          }
+          return originalAddTransceiver.call(this, trackOrKind, init);
+        };
+      }
+
       PC.prototype.__micMaxPcPatched = true;
     }
 
@@ -375,26 +385,41 @@
     }
   }
 
+  async function getStreamWithFallback(orig, constraints, ctx) {
+    try {
+      return await orig.call(ctx, normalizeConstraints(constraints));
+    } catch (_) {
+      return orig.call(ctx, constraints);
+    }
+  }
+
   async function wrapped(orig, constraints, ctx) {
-    const s = await (async () => {
-      try { return await orig.call(ctx, normalizeConstraints(constraints)); }
-      catch (_) { return orig.call(ctx, constraints); }
-    })();
-    if (!cfg().enabled || !wantsAudio(constraints)) return s;
-    try { return build(s, state.config); }
-    catch (_) { return s; }
+    const stream = await getStreamWithFallback(orig, constraints, ctx);
+    if (!cfg().enabled || !wantsAudio(constraints)) return stream;
+    try {
+      return build(stream, state.config);
+    } catch (_) {
+      return stream;
+    }
   }
 
   patchPeerConnectionPaths();
 
   if (navigator.mediaDevices?.getUserMedia) {
     state.origMD = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    navigator.mediaDevices.getUserMedia = (c) => wrapped(state.origMD, c, navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (constraints) => wrapped(state.origMD, constraints, navigator.mediaDevices);
   }
 
-  window.addEventListener("message", (e) => {
-    if (e.source !== window || !e.data || e.data.type !== MSG_CFG) return;
-    state.config = cfg(e.data.payload);
+  if (navigator.getUserMedia) {
+    state.origLegacy = navigator.getUserMedia.bind(navigator);
+    navigator.getUserMedia = (constraints, ok, fail) => {
+      wrapped(state.origLegacy, constraints, navigator).then(ok).catch((err) => fail && fail(err));
+    };
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || !event.data || event.data.type !== MSG_CFG) return;
+    state.config = cfg(event.data.payload);
     updateAllPipelines(state.config);
   });
 
